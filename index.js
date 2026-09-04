@@ -3,7 +3,8 @@ const express = require('express');
 const {
     Client,
     GatewayIntentBits,
-    PermissionFlagsBits,
+    REST,
+    Routes,
 } = require('discord.js');
 const store = require('./store');
 
@@ -20,25 +21,29 @@ const client = new Client({
 });
 
 // ---------------------------------------------------------------------------
-// #checkpoints parsing — this is how we figure out which Discord user is
-// behind a given BeamMP guest name. We only LINK identities here now; vehicle
-// access is entirely controlled by /assign and /unassign.
+// #checkpoints parsing — handles new/old log styles with emojis & raw mentions
 // ---------------------------------------------------------------------------
 function parseLogMessage(content, messageMentions) {
     if (!content) return null;
 
-    const regex = /([a-zA-Z0-9_]+)\s+connected\.\s+Discord Profile:\s*(.*)/i;
-    const match = content.match(regex);
+    // Matches connected logs containing 'connected. Discord Profile:' regardless of emojis or markdown
+    const connectedRegex = /(?:🟢|⚠️|🔴)?\s*\*?\*?([a-zA-Z0-9_]+)\*?\*?\s+connected\.\s+Discord Profile:\s*(.*)/i;
+    const match = content.match(connectedRegex);
     if (!match) return null;
 
     const beamUsername = match[1];
-    let discordRaw = match[2].trim().replace(/\.$/, '');
+    let discordRaw = match[2].trim().replace(/\.$/, '').replace(/\*+/g, '');
     let discordId = null;
 
     if (messageMentions && messageMentions.users && messageMentions.users.size > 0) {
         const mentionedUser = messageMentions.users.first();
         discordId = mentionedUser.id;
         discordRaw = mentionedUser.username;
+    } else if (discordRaw.startsWith('<@') && discordRaw.endsWith('>')) {
+        const idMatch = discordRaw.match(/<@!?(\d+)>/);
+        if (idMatch) {
+            discordId = idMatch[1];
+        }
     } else if (discordRaw.startsWith('@')) {
         discordRaw = discordRaw.substring(1);
     }
@@ -71,8 +76,63 @@ async function silentHistorySync() {
     }
 }
 
-client.on('ready', () => {
+client.on('ready', async () => {
     console.log(`[Bot Online] Logged in as ${client.user.tag}`);
+
+    // Automatically register slash commands with Discord upon startup
+    const commands = [
+        {
+            name: 'assign',
+            description: 'Assign a vehicle to a player',
+            options: [
+                { name: 'vehicle', type: 3, description: 'Vehicle model name', required: true },
+                { name: 'beam_username', type: 3, description: 'BeamMP username', required: false },
+                { name: 'discord_user', type: 6, description: 'Discord user', required: false }
+            ]
+        },
+        {
+            name: 'unassign',
+            description: 'Unassign a vehicle from a player',
+            options: [
+                { name: 'vehicle', type: 3, description: 'Vehicle model name', required: true },
+                { name: 'beam_username', type: 3, description: 'BeamMP username', required: false },
+                { name: 'discord_user', type: 6, description: 'Discord user', required: false }
+            ]
+        },
+        {
+            name: 'vehicles',
+            description: 'Check assigned vehicles',
+            options: [
+                { name: 'beam_username', type: 3, description: 'BeamMP username', required: false },
+                { name: 'discord_user', type: 6, description: 'Discord user', required: false }
+            ]
+        },
+        {
+            name: 'whois',
+            description: 'Check who is linked to a BeamMP username',
+            options: [
+                { name: 'beam_username', type: 3, description: 'BeamMP username', required: true }
+            ]
+        },
+        {
+            name: 'link',
+            description: 'Manually link a BeamMP username to a Discord user',
+            options: [
+                { name: 'discord_user', type: 6, description: 'Discord user', required: true },
+                { name: 'beam_username', type: 3, description: 'BeamMP username', required: true }
+            ]
+        }
+    ];
+
+    const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
+    try {
+        console.log('[Bot] Registering application slash commands...');
+        await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
+        console.log('[Bot] Successfully registered slash commands.');
+    } catch (error) {
+        console.error('[Bot] Failed to register commands:', error);
+    }
+
     silentHistorySync();
     startApiServer();
 });
@@ -90,8 +150,6 @@ client.on('messageCreate', (message) => {
 // Slash commands
 // ---------------------------------------------------------------------------
 
-// Resolves a target beammp username from either a discord user option or a
-// raw beammp_username string option (at least one must be provided).
 function resolveBeamUsername(interaction) {
     const discordUser = interaction.options.getUser('discord_user');
     const rawUsername = interaction.options.getString('beam_username');
@@ -170,7 +228,7 @@ client.on('interactionCreate', async (interaction) => {
 });
 
 // ---------------------------------------------------------------------------
-// Local HTTP API — polled by the BeamMP Lua plugin.
+// Local HTTP API — polled by the BeamMP Lua plugin (No API Key Required)
 // ---------------------------------------------------------------------------
 function startApiServer() {
     const app = express();
