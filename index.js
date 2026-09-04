@@ -182,8 +182,12 @@ client.on('interactionCreate', async (interaction) => {
 function startApiServer() {
     const app = express();
 
-    // The BeamMP plugin runs on a different host than this bot, so this API
-    // is reachable over the internet. Require a shared key on every request.
+    // LISÄÄ TÄMÄ TÄHÄN: Julkinen terveystarkastusreitti Renderille
+    app.get('/health', (req, res) => {
+        res.status(200).send('OK');
+    });
+
+    // Tämän jälkeen tuleva API-avaintarkistus ei koske yllä olevaa /health-reittiä
     app.use((req, res, next) => {
         const suppliedKey = req.get('x-api-key') || req.query.api_key;
         if (suppliedKey !== API_KEY) {
