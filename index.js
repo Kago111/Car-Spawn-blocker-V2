@@ -10,12 +10,6 @@ const store = require('./store');
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const CHECKPOINTS_CHANNEL_ID = process.env.CHECKPOINTS_CHANNEL_ID;
 const API_PORT = process.env.API_PORT || 3000;
-const API_KEY = process.env.API_KEY;
-
-if (!API_KEY) {
-    console.error('[FATAL] API_KEY is not set in .env. Refusing to start an unauthenticated public API.');
-    process.exit(1);
-}
 
 const client = new Client({
     intents: [
@@ -176,25 +170,13 @@ client.on('interactionCreate', async (interaction) => {
 });
 
 // ---------------------------------------------------------------------------
-// Local HTTP API — polled by the BeamMP Lua plugin. Keep this bound to
-// localhost/LAN only; it is not authenticated.
+// Local HTTP API — polled by the BeamMP Lua plugin.
 // ---------------------------------------------------------------------------
 function startApiServer() {
     const app = express();
 
-    // LISÄÄ TÄMÄ TÄHÄN: Julkinen terveystarkastusreitti Renderille
     app.get('/health', (req, res) => {
         res.status(200).send('OK');
-    });
-
-    // Tämän jälkeen tuleva API-avaintarkistus ei koske yllä olevaa /health-reittiä
-    app.use((req, res, next) => {
-        const suppliedKey = req.get('x-api-key') || req.query.api_key;
-        if (suppliedKey !== API_KEY) {
-            res.status(401).json({ error: 'unauthorized' });
-            return;
-        }
-        next();
     });
 
     app.get('/getUser', (req, res) => {
@@ -211,10 +193,6 @@ function startApiServer() {
         res.json(player);
     });
 
-    // Bound to 0.0.0.0 because the BeamMP server is on a different host.
-    // Make sure your bot host's firewall/security group allows inbound
-    // traffic on API_PORT, and lock it down to the BeamMP server's IP if
-    // your provider supports that.
     app.listen(API_PORT, '0.0.0.0', () => {
         console.log(`[API] Listening on 0.0.0.0:${API_PORT} (for the BeamMP plugin)`);
     });
